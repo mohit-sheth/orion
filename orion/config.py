@@ -60,9 +60,13 @@ def load_ack(ack: str) -> Dict[str,Any]:
     try:
         rendered_config = yaml.safe_load(template_content)
     except Exception as e:  # pylint: disable=broad-exception-caught
-        logger_instance.error("An error occurred: %s", e)
+        logger.error("An error occurred: %s", e)
         sys.exit(1)
+    # Empty rendered config
+    if rendered_config is None:
+        return rendered_config
+    # Ensure the ack file is properly setup.
     if "ack" not in rendered_config:
-        logger_instance.error("Ack file not setup properly")
+        logger.error("Ack file not setup properly")
         sys.exit(1)
     return rendered_config
