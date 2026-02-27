@@ -62,6 +62,7 @@ def run(**kwargs: dict[str, Any]) -> Tuple[Tuple[Dict[str, Any], bool, Any, Any,
     result_output, regression_flag, regression_data = {}, False, []
     result_output_pull, regression_flag_pull, regression_data_pull = {}, False, []
     average_values_df_pull, average_values_df = "", ""
+    all_viz_data = []
     pr = 0
     for test in config["tests"]:
         # Create fingerprint Matcher
@@ -82,19 +83,26 @@ def run(**kwargs: dict[str, Any]) -> Tuple[Tuple[Dict[str, Any], bool, Any, Any,
                     test_periodic["metadata"]["repository"] = ""
                     futures_periodic = executor.submit(analyze, test_periodic, kwargs, False)
                     concurrent.futures.wait([futures_pull, futures_periodic])
-                    result_output_pull = futures_pull.result()[0]
-                    regression_flag_pull = futures_pull.result()[1]
-                    regression_data_pull = futures_pull.result()[2]
-                    average_values_df_pull = futures_pull.result()[3]
-                    result_output = futures_periodic.result()[0]
-                    regression_flag = futures_periodic.result()[1]
-                    regression_data = futures_periodic.result()[2]
-                    average_values_df = futures_periodic.result()[3]
+                    pull_result = futures_pull.result()
+                    periodic_result = futures_periodic.result()
+                    result_output_pull = pull_result[0]
+                    regression_flag_pull = pull_result[1]
+                    regression_data_pull = pull_result[2]
+                    average_values_df_pull = pull_result[3]
+                    result_output = periodic_result[0]
+                    regression_flag = periodic_result[1]
+                    regression_data = periodic_result[2]
+                    average_values_df = periodic_result[3]
+                    if pull_result[4] is not None:
+                        all_viz_data.append(pull_result[4])
+                    if periodic_result[4] is not None:
+                        all_viz_data.append(periodic_result[4])
             else:
-                result_output, regression_flag, regression_data, average_values_df = analyze(
-                    test,
-                    kwargs
-                )
+                (result_output, regression_flag,
+                 regression_data, average_values_df,
+                 viz_data) = analyze(test, kwargs)
+                if viz_data is not None:
+                    all_viz_data.append(viz_data)
     results_pull = (
         result_output_pull,
         regression_flag_pull,
@@ -107,7 +115,8 @@ def run(**kwargs: dict[str, Any]) -> Tuple[Tuple[Dict[str, Any], bool, Any, Any,
         regression_flag,
         regression_data,
         average_values_df,
-        0
+        0,
+        all_viz_data
     )
     return results, results_pull
 
@@ -163,7 +172,7 @@ def analyze(test, kwargs, is_pull = False) -> Tuple[Dict[str, Any], bool, Any, A
 
     if fingerprint_matched_df is None:
         if is_pull:
-            return None, None, None, None
+            return None, None, None, None, None
         sys.exit(3) # No data present
 
     metrics = []
@@ -173,7 +182,7 @@ def analyze(test, kwargs, is_pull = False) -> Tuple[Dict[str, Any], bool, Any, A
     algorithm_name = get_algorithm_type(kwargs)
     if algorithm_name is None:
         logger.error("No algorithm configured")
-        return None, None, None, None
+        return None, None, None, None, None
     logger.info("Comparison algorithm: %s", algorithm_name)
 
     # Isolation forest requires no null values in the dataframe
@@ -250,7 +259,21 @@ def analyze(test, kwargs, is_pull = False) -> Tuple[Dict[str, Any], bool, Any, A
                 bad_ver = None
 
     regression_flag = regression_flag or test_flag
-    return result_output, regression_flag, regression_data, average_values
+
+    viz_data = None
+    if kwargs.get("viz"):
+        from orion.visualization import VizData  # pylint: disable=import-outside-toplevel
+        _, change_points_by_metric = algorithm.get_analysis_results()
+        viz_data = VizData(
+            test_name=test["name"],
+            dataframe=algorithm.dataframe.copy(),
+            metrics_config=metrics_config,
+            change_points_by_metric=change_points_by_metric,
+            uuid_field=test["uuid_field"],
+            version_field=test["version_field"],
+        )
+
+    return result_output, regression_flag, regression_data, average_values, viz_data
 
 
 def tabulate_average_values(

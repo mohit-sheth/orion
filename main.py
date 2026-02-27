@@ -151,6 +151,7 @@ def validate_anomaly_options(ctx, param, value: Any) -> Any: # pylint: disable =
 @click.option("--input-vars", type=Dictionary(), default="{}", help='Arbitrary input variables to use in the config template, for example: {"version": "4.18"}')
 @click.option("--display", type=List(), default=["buildUrl"], help="Add metadata field as a column in the output (e.g. ocpVirt, upstreamJob)")
 @click.option("--pr-analysis", is_flag=True, help="Analyze PRs for regressions", default=False)
+@click.option("--viz", is_flag=True, default=False, help="Generate interactive HTML visualizations alongside output")
 def main(**kwargs):
     """
     Orion runs on command line mode, and helps in detecting regressions
@@ -268,6 +269,16 @@ def main(**kwargs):
         has_regression = print_output(logger, kwargs, results, is_pull)
         if is_pull:
             print_output(logger, kwargs, results_pull, is_pull)
+    if kwargs.get("viz"):
+        try:
+            from orion.visualization import generate_test_html  # pylint: disable=import-outside-toplevel
+            output_base_path = kwargs['save_output_path'].split('.')[0]
+            all_viz_data = results[5] if len(results) > 5 else []
+            for viz_data in all_viz_data:
+                generate_test_html(viz_data, output_base_path)
+        except Exception as e:  # pylint: disable=broad-except
+            logger.warning("Visualization generation failed: %s", e)
+
     if has_regression:
         sys.exit(2) ## regression detected
 
