@@ -55,6 +55,7 @@ class Utils:
         """
         dataframe_list = []
         metrics_config = {}
+        global_timestamp_field = timestamp_field
 
         for metric in metrics:
             metric_name = metric["name"]
@@ -63,7 +64,7 @@ class Utils:
             labels = metric.pop("labels", None)
             direction = int(metric.pop("direction", 0))
             threshold = abs(int(metric.pop("threshold", test_threshold)))
-            timestamp_field = metric.pop("timestamp", timestamp_field)
+            timestamp_field = metric.pop("timestamp", global_timestamp_field)
             correlation = metric.pop("correlation", "")
             context = metric.pop("context", 5)
             self.logger.info("Collecting %s", metric_name)
@@ -80,6 +81,7 @@ class Utils:
                 metric["labels"] = labels
                 metric["direction"] = direction
                 metric["threshold"] = threshold
+                metric["timestamp"] = timestamp_field
                 metric["correlation"] = correlation
                 metric["context"] = context
                 for metric_dataframe_name in metric_dataframe_names:
