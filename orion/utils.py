@@ -9,11 +9,11 @@ import json
 import re
 import urllib.parse
 import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from functools import reduce
 from typing import List, Any, Dict, Tuple
 import pandas as pd
-import pyshorteners
 import requests
 from tabulate import tabulate
 
@@ -436,14 +436,10 @@ class Utils:
                 lambda uuid, f=field: display_data.get(uuid, {}).get(f, "N/A")
             )
         if options["convert_tinyurl"]:
-            shortener = pyshorteners.Shortener(timeout=10)
+            all_urls = {uuid: buildUrls[uuid] for uuid in merged_df[self.uuid_field]}
+            shortened = self.shorten_urls_batch(all_urls)
             merged_df.loc[:, "buildUrl"] = merged_df[self.uuid_field].apply(
-                lambda uuid: (
-                    self.shorten_url(shortener, buildUrls[uuid])
-                    if options["convert_tinyurl"]
-                    else buildUrls[uuid]
-                )
-                # pylint: disable = cell-var-from-loop
+                lambda uuid: shortened.get(uuid, buildUrls[uuid])
             )
         merged_df = merged_df.reset_index(drop=True)
         # save the dataframe
@@ -452,21 +448,36 @@ class Utils:
         return merged_df, metrics_config
 
 
-    def shorten_url(self, shortener: any, uuids: str) -> str:
-        """Shorten url if there is a list of buildUrls
+    def shorten_urls_batch(self, urls_by_uuid: Dict[str, str]) -> Dict[str, str]:
+        """Shorten all build URLs concurrently using TinyURL API directly.
 
         Args:
-            shortener (any): shortener object to use tinyrl.short on
-            uuids (List[str]): List of uuids to shorten
+            urls_by_uuid: mapping of uuid to build URL
 
         Returns:
-            str: a combined string of shortened urls
+            mapping of uuid to shortened URL
         """
-        short_url_list = []
-        for buildUrl in uuids.split(","):
-            short_url_list.append(shortener.tinyurl.short(buildUrl))
-        short_url = ",".join(short_url_list)
-        return short_url
+        unique_urls = set(urls_by_uuid.values())
+
+        url_map = {}
+        session = requests.Session()
+
+        def _shorten(url: str) -> Tuple[str, str]:
+            resp = session.get(
+                "https://tinyurl.com/api-create.php",
+                params={"url": url},
+                timeout=10,
+            )
+            resp.raise_for_status()
+            return url, resp.text.strip()
+
+        with ThreadPoolExecutor(max_workers=min(20, len(unique_urls) or 1)) as pool:
+            futures = {pool.submit(_shorten, u): u for u in unique_urls}
+            for future in as_completed(futures):
+                original, short = future.result()
+                url_map[original] = short
+
+        return {uuid: url_map.get(url, url) for uuid, url in urls_by_uuid.items()}
 
 
     def get_metadata_with_uuid(self, uuid: str, match: Matcher) -> Dict[Any, Any]:
