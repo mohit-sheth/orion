@@ -7,7 +7,7 @@ tests:
       masterNodesCount: 3
       workerNodesType: m5.xlarge
       workerNodesCount: 252
-      infraNodesType: r5.4xlarge
+      infraNodesType: r5.8xlarge
       benchmark.keyword: udn-density-pods
       wildcard:
         ocpVersion: "{{ version }}*"
