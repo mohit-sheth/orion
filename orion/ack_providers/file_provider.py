@@ -73,7 +73,7 @@ class FileAckProvider(AckProvider):
         version: Optional[str] = None,
         test: Optional[str] = None,
         **kwargs
-    ) -> bool:
+    ) -> Optional[str]:
         """
         Append a new acknowledgment to the YAML file.
 
@@ -86,7 +86,7 @@ class FileAckProvider(AckProvider):
             **kwargs: Additional fields to include
 
         Returns:
-            True if successful, False otherwise
+            UUID on success, None on failure
         """
         try:
             # Load existing acks
@@ -116,7 +116,7 @@ class FileAckProvider(AckProvider):
                         "ACK entry already exists for uuid=%s, metric=%s",
                         uuid, metric
                     )
-                    return False
+                    return None
 
             # Append and save
             existing_acks.setdefault("ack", []).append(new_entry)
@@ -128,8 +128,8 @@ class FileAckProvider(AckProvider):
                 "Created ACK entry: uuid=%s, metric=%s, file=%s",
                 uuid[:8], metric, self.ack_file
             )
-            return True
+            return uuid
 
         except Exception as e:  # pylint: disable=broad-exception-caught
             self.logger.error("Failed to create ACK entry: %s", e)
-            return False
+            return None
