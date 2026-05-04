@@ -114,7 +114,7 @@ class Utils:
         """
         self.logger.info("process_aggregation_metric")
         aggregated_metric_data = match.get_agg_metric_query(uuids, metric, timestamp_field)
-        self.logger.info("aggregated_metric_data %s", aggregated_metric_data)
+        self.logger.debug("aggregated_metric_data %s", aggregated_metric_data)
         aggregation_value = metric["metric_of_interest"]
         aggregation_type = metric["agg"]["agg_type"]
 

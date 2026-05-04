@@ -4,6 +4,7 @@ orion.ack_providers.jira_provider
 JIRA-based ACK provider for tracking regressions in JIRA.
 """
 
+import os
 import time
 from typing import List, Dict, Any, Optional, NamedTuple
 import re
@@ -398,7 +399,7 @@ class JiraAckProvider(AckProvider):
         version: Optional[str] = None,
         test: Optional[str] = None,
         **kwargs
-    ) -> bool:
+    ) -> Optional[str]:
         """
         Create a new JIRA issue for a regression acknowledgment.
 
@@ -411,7 +412,7 @@ class JiraAckProvider(AckProvider):
             **kwargs: Additional fields (e.g., build_url, pct_change)
 
         Returns:
-            True if issue created successfully, False otherwise
+            JIRA issue key (e.g. 'PERFSCALE-123') on success, None on failure
         """
         # Check if issue already exists
         existing = self._find_existing_issue(uuid, metric)
@@ -420,7 +421,7 @@ class JiraAckProvider(AckProvider):
                 "JIRA issue already exists for uuid=%s, metric=%s: %s",
                 uuid[:8], metric, existing.key
             )
-            return False
+            return None
 
         # Build issue fields
         labels = []
@@ -505,10 +506,10 @@ class JiraAckProvider(AckProvider):
                 verify = self._find_existing_issue(uuid, metric)
                 if verify:
                     self.logger.info("Verified JIRA issue creation: %s", verify.key)
-                    return True
+                    return new_issue.key
 
                 self.logger.warning("JIRA issue created but verification failed")
-                return True  # Issue was created even if verification failed
+                return new_issue.key
 
             except JIRAError as e:
                 # Check for permission errors specifically
@@ -524,7 +525,7 @@ class JiraAckProvider(AckProvider):
                         self.project
                     )
                     # Don't retry permission errors
-                    return False
+                    return None
                 if e.status_code == 400 and "component" in e.text.lower():
                     self.logger.error(
                         "JIRA component error (HTTP %d): %s",
@@ -539,7 +540,7 @@ class JiraAckProvider(AckProvider):
                         self.project
                     )
                     # Don't retry component errors
-                    return False
+                    return None
                 self.logger.warning(
                     "JIRA creation attempt %d/%d failed: %s",
                     attempt + 1, self.config.retry_attempts, e
@@ -552,7 +553,20 @@ class JiraAckProvider(AckProvider):
                 break
 
         self.logger.error("Failed to create JIRA issue after %d attempts", self.config.retry_attempts)
-        return False
+        return None
+
+    def attach_file(self, issue_key: str, file_path: str) -> bool:
+        """Attach a file to an existing JIRA issue."""
+        try:
+            self.jira.add_attachment(issue=issue_key, attachment=file_path)
+            self.logger.info(
+                "Attached %s to JIRA issue %s",
+                os.path.basename(file_path), issue_key
+            )
+            return True
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            self.logger.warning("Failed to attach file to %s: %s", issue_key, e)
+            return False
 
     def _find_existing_issue(self, uuid: str, metric: str):
         """

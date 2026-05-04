@@ -48,7 +48,7 @@ class AckProvider(ABC):
         version: Optional[str] = None,
         test: Optional[str] = None,
         **kwargs
-    ) -> bool:
+    ) -> Optional[str]:
         """
         Create a new acknowledgment for a regression.
 
@@ -61,7 +61,7 @@ class AckProvider(ABC):
             **kwargs: Provider-specific additional arguments
 
         Returns:
-            True if acknowledgment was created successfully, False otherwise
+            Provider-specific identifier on success (e.g. JIRA issue key), None on failure
         """
 
     def merge_acks(self, ack_lists: List[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:

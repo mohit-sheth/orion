@@ -161,7 +161,7 @@ def format_jira_description(regression: dict, metric_name: str, pct_change: floa
     return desc
 
 
-def auto_create_jira_issues(regression_data: list, provider: AckProvider, logger) -> int:
+def auto_create_jira_issues(regression_data: list, provider: AckProvider, logger) -> tuple[int, dict[str, list[str]]]:  # pylint: disable=too-many-locals
     """
     Automatically create JIRA issues for detected regressions.
 
@@ -171,10 +171,12 @@ def auto_create_jira_issues(regression_data: list, provider: AckProvider, logger
         logger: Logger instance
 
     Returns:
-        Number of JIRA issues successfully created
+        Tuple of (created_count, issue_keys_by_test) where issue_keys_by_test
+        maps test_name to a list of created JIRA issue keys.
     """
+    issue_keys_by_test: dict[str, list[str]] = {}
     if not regression_data:
-        return 0
+        return 0, issue_keys_by_test
 
     created_count = 0
     skipped_count = 0
@@ -203,7 +205,7 @@ def auto_create_jira_issues(regression_data: list, provider: AckProvider, logger
                 bad_ver = regression.get("bad_ver")
                 prev_ver = regression.get("prev_ver")
 
-                success = provider.create_ack(
+                issue_key = provider.create_ack(
                     uuid=uuid,
                     metric=metric_name,
                     reason=format_jira_description(regression, metric_name, pct_change),
@@ -214,9 +216,12 @@ def auto_create_jira_issues(regression_data: list, provider: AckProvider, logger
                     prev_version=str(prev_ver)[:4].rstrip('.') if prev_ver else None
                 )
 
-                if success:
+                if issue_key:
                     created_count += 1
-                    logger.info("✓ Created JIRA issue for %s / %s", uuid[:8], metric_name)
+                    logger.info("✓ Created JIRA issue %s for %s / %s", issue_key, uuid[:8], metric_name)
+                    test_name = regression.get("test_name")
+                    if test_name:
+                        issue_keys_by_test.setdefault(test_name, []).append(issue_key)
                 else:
                     skipped_count += 1
                     logger.debug("Skipped (likely already exists): %s / %s", uuid[:8], metric_name)
@@ -230,7 +235,21 @@ def auto_create_jira_issues(regression_data: list, provider: AckProvider, logger
     if skipped_count > 0:
         logger.debug("Skipped %d issue(s) (already exist or failed)", skipped_count)
 
-    return created_count
+    return created_count, issue_keys_by_test
+
+
+def _attach_viz_to_jira(
+    jira_provider, issue_keys_by_test: dict[str, list[str]],
+    output_base_path: str, run_type: str, logger
+) -> None:
+    """Attach generated HTML visualization files to their corresponding JIRA issues."""
+    for test_name, keys in issue_keys_by_test.items():
+        viz_file = build_viz_output_file(output_base_path, test_name, run_type)
+        if not os.path.isfile(viz_file):
+            logger.debug("Viz file not found for %s, skipping attachment", test_name)
+            continue
+        for issue_key in keys:
+            jira_provider.attach_file(issue_key, viz_file)
 
 
 class Dictionary(click.ParamType):
@@ -506,11 +525,6 @@ def main(**kwargs):
     # Load config first (needed for auto-detection)
     kwargs["config"] = load_config(kwargs["config"], kwargs["input_vars"])
 
-    # Validate --jira-auto-create requires --jira-ack
-    if kwargs.get("jira_auto_create") and not kwargs.get("jira_ack"):
-        logger.error("--jira-auto-create requires --jira-ack to be enabled")
-        sys.exit(1)
-
     # Handle ACK loading using provider system
     providers, version, test_type = get_ack_providers(kwargs, kwargs["config"], logger)
 
@@ -521,6 +535,10 @@ def main(**kwargs):
             if isinstance(provider, JiraAckProvider):
                 jira_provider = provider
                 break
+
+    # If --jira-auto-create without --jira-ack, create a Jira provider for issue creation only
+    if kwargs.get("jira_auto_create") and not jira_provider:
+        jira_provider = _create_jira_provider(kwargs, kwargs["config"], logger)
 
     if providers:
         # Collect ACKs from all providers
@@ -577,10 +595,12 @@ def main(**kwargs):
         is_pull = True
 
     # Auto-create JIRA issues for regressions if enabled
+    issue_keys_by_test = {}
+    issue_keys_by_test_pull = {}
     if kwargs.get("jira_auto_create") and jira_provider:
         if results.regression_flag and results.regression_data:
             logger.info("Auto-creating JIRA issues for detected regressions...")
-            created = auto_create_jira_issues(results.regression_data, jira_provider, logger)
+            created, issue_keys_by_test = auto_create_jira_issues(results.regression_data, jira_provider, logger)
             if created == 0 and results.regression_data:
                 logger.warning(
                     "No JIRA issues were created. This may be due to permissions. "
@@ -588,7 +608,7 @@ def main(**kwargs):
                 )
         if is_pull and results_pull.regression_flag and results_pull.regression_data:
             logger.info("Auto-creating JIRA issues for pull request regressions...")
-            created = auto_create_jira_issues(results_pull.regression_data, jira_provider, logger)
+            created, issue_keys_by_test_pull = auto_create_jira_issues(results_pull.regression_data, jira_provider, logger)
             if created == 0 and results_pull.regression_data:
                 logger.warning(
                     "No JIRA issues were created. This may be due to permissions. "
@@ -619,6 +639,17 @@ def main(**kwargs):
                     generate_test_html(viz_data, output_file)
         except Exception as e:  # pylint: disable=broad-except
             logger.warning("Visualization generation failed: %s", e)
+
+    # Attach HTML visualizations to JIRA issues
+    if kwargs.get("viz") and kwargs.get("jira_auto_create") and jira_provider:
+        try:
+            output_base_path = str(Path(kwargs['save_output_path']).with_suffix(''))
+            _attach_viz_to_jira(jira_provider, issue_keys_by_test, output_base_path,
+                                "periodic" if is_pull else "", logger)
+            _attach_viz_to_jira(jira_provider, issue_keys_by_test_pull, output_base_path,
+                                "pull", logger)
+        except Exception as e:  # pylint: disable=broad-except
+            logger.warning("JIRA attachment failed: %s", e)
 
     if has_regression:
         sys.exit(2) ## regression detected
