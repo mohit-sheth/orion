@@ -1,0 +1,22 @@
+name: Notify orion-mcp of new release
+
+on:
+  release:
+    types: [published]
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger orion-mcp rebuild
+        env:
+          GH_TOKEN: ${{ secrets.ORION_MCP_DISPATCH_TOKEN }}
+        run: |
+          curl -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            https://api.github.com/repos/cloud-bulldozer/orion-mcp/dispatches \
+            -d "{\"event_type\": \"orion-release\", \"client_payload\": {\"tag\": \"${{ github.ref_name }}\"}}"
