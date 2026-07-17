@@ -634,7 +634,7 @@ def main(**kwargs):
 
     # Auto-create JIRA issues for regressions if enabled
     issue_keys_by_test = {}
-    issue_keys_by_test_pull = {}
+    issue_keys_by_test_pull_by_pr: dict[int, dict[str, list[str]]] = {}
     if kwargs.get("jira_auto_create") and jira_provider:
         formatter_for_regression = FormatterFactory.get_formatter(cnsts.JSON)
         if results.regression_flag:
@@ -652,17 +652,23 @@ def main(**kwargs):
                 )
         if is_pull and results_pull.regression_flag:
             logger.info("Auto-creating JIRA issues for pull request regressions...")
-            pull_reg_data = []
-            for analysis in results_pull.analyses:
-                pull_reg_data.extend(
-                    formatter_for_regression.extract_regression_data(analysis)
-                )
-            created, issue_keys_by_test_pull = auto_create_jira_issues(pull_reg_data, jira_provider, logger)
-            if created == 0 and pull_reg_data:
-                logger.warning(
-                    "No JIRA issues were created. This may be due to permissions. "
-                    "See JIRA_PERMISSIONS_TROUBLESHOOTING.md for help."
-                )
+            for pr_num, pr_analyses in analyses_by_pr.items():
+                pr_reg_data = []
+                for analysis in pr_analyses:
+                    if analysis.regression_flag:
+                        pr_reg_data.extend(
+                            formatter_for_regression.extract_regression_data(analysis)
+                        )
+                if not pr_reg_data:
+                    continue
+                created, issue_keys = auto_create_jira_issues(pr_reg_data, jira_provider, logger)
+                if created == 0 and pr_reg_data:
+                    logger.warning(
+                        "No JIRA issues were created for PR %s. This may be due to permissions. "
+                        "See JIRA_PERMISSIONS_TROUBLESHOOTING.md for help.",
+                        pr_num,
+                    )
+                issue_keys_by_test_pull_by_pr[pr_num] = issue_keys
 
     formatter = FormatterFactory.get_formatter(kwargs["output_format"])
     has_regression = False
@@ -748,9 +754,9 @@ def main(**kwargs):
                 )
                 generate_test_html(viz_data, output_file)
             if is_pull:
-                for viz_data in results_pull.viz_data:
+                for pr_num, viz_data in results_pull.viz_data:
                     output_file = build_viz_output_file(
-                        output_base_path, viz_data.test_name, "pull"
+                        output_base_path, viz_data.test_name, f"pull_{pr_num}"
                     )
                     generate_test_html(viz_data, output_file)
         except Exception as e:  # pylint: disable=broad-except
@@ -762,8 +768,10 @@ def main(**kwargs):
             output_base_path = str(Path(kwargs['save_output_path']).with_suffix(''))
             _attach_viz_to_jira(jira_provider, issue_keys_by_test, output_base_path,
                                 "periodic" if is_pull else "", logger)
-            _attach_viz_to_jira(jira_provider, issue_keys_by_test_pull, output_base_path,
-                                "pull", logger)
+            for pr_num in kwargs.get("pull_numbers", []):
+                issue_keys_for_pr = issue_keys_by_test_pull_by_pr.get(pr_num, {})
+                _attach_viz_to_jira(jira_provider, issue_keys_for_pr, output_base_path,
+                                    f"pull_{pr_num}", logger)
         except Exception as e:  # pylint: disable=broad-except
             logger.warning("JIRA attachment failed: %s", e)
 
