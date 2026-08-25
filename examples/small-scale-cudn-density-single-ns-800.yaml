@@ -1,6 +1,6 @@
 metricsFile: metrics/cudn-density-metrics.yaml
 tests:
-  - name: aws-small-scale-cudn-density-single-ns-500
+  - name: aws-small-scale-cudn-density-single-ns-800
     metadata:
       platform: AWS
       masterNodesType: m6a.4xlarge
@@ -8,7 +8,7 @@ tests:
       workerNodesType: m6a.4xlarge
       workerNodesCount: 24
       benchmark.keyword: cudn-density
-      kbCfg.iterations: "500"
+      kbCfg.iterations: "800"
       kbCfg.namespacesPerCudn: "1"
       wildcard:
         ocpVersion: "{{ version }}*"
