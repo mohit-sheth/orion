@@ -13,6 +13,7 @@ from orion.utils import Utils, get_subtracted_timestamp
 from orion.github_client import GitHubClient
 from orion.visualization import VizData
 from orion.pipeline.analysis_result import AnalysisResult
+from orion.confidence import compute_confidence
 
 
 class TestResults(NamedTuple):
@@ -236,8 +237,25 @@ def analyze(test, kwargs, is_pull=False):
 
     logger.info("Comparison algorithm: %s", algorithm_name)
 
+    iforest_nan_cols = []
+    iforest_nan_configs = {}
     if algorithm_name == cnsts.ISOLATION_FOREST:
-        fingerprint_matched_df = fingerprint_matched_df.dropna().reset_index()
+        iforest_nan_cols = fingerprint_matched_df.columns[
+            fingerprint_matched_df.isna().all()
+        ].tolist()
+        if iforest_nan_cols:
+            logger.warning(
+                "Dropping all-NaN columns before Isolation Forest: %s",
+                iforest_nan_cols,
+            )
+            fingerprint_matched_df = fingerprint_matched_df.drop(
+                columns=iforest_nan_cols
+            )
+            for col in iforest_nan_cols:
+                if col in metrics_config:
+                    iforest_nan_configs[col] = metrics_config.pop(col)
+        fingerprint_matched_df = fingerprint_matched_df.dropna().reset_index(drop=True)
+        metrics = list(metrics_config.keys())
 
     algorithm_factory = AlgorithmFactory()
     algorithm = algorithm_factory.instantiate_algorithm(
@@ -299,8 +317,18 @@ def analyze(test, kwargs, is_pull=False):
             and expanded_points > len(fingerprint_matched_df)
         ):
             if algorithm_name == cnsts.ISOLATION_FOREST:
+                exp_nan = expanded_fingerprint_matched_df.columns[
+                    expanded_fingerprint_matched_df.isna().all()
+                ].tolist()
+                if exp_nan:
+                    expanded_fingerprint_matched_df = (
+                        expanded_fingerprint_matched_df.drop(columns=exp_nan)
+                    )
+                    iforest_nan_cols = list(
+                        set(iforest_nan_cols) | set(exp_nan)
+                    )
                 expanded_fingerprint_matched_df = (
-                    expanded_fingerprint_matched_df.dropna().reset_index()
+                    expanded_fingerprint_matched_df.dropna().reset_index(drop=True)
                 )
 
             expanded_algorithm = algorithm_factory.instantiate_algorithm(
@@ -369,6 +397,11 @@ def analyze(test, kwargs, is_pull=False):
             acked_entries=acked_entries,
         )
 
+    if iforest_nan_configs:
+        for col, cfg in iforest_nan_configs.items():
+            final_algorithm.dataframe[col] = float("nan")
+            metrics_config[col] = cfg
+
     series = final_algorithm.setup_series()
 
     min_cp_index = None
@@ -381,6 +414,13 @@ def analyze(test, kwargs, is_pull=False):
         avg_values = final_algorithm.dataframe[metrics].iloc[:min_cp_index].mean()
     else:
         avg_values = final_algorithm.dataframe[metrics].mean()
+
+    confidence_by_metric = compute_confidence(
+        algorithm_name,
+        final_algorithm.original_dataframe,
+        change_points_by_metric,
+        raw_change_points_by_metric=final_algorithm.raw_change_points_by_metric,
+    )
 
     analysis_result = AnalysisResult(
         test_name=test["name"],
@@ -398,5 +438,6 @@ def analyze(test, kwargs, is_pull=False):
         version_field=test["version_field"],
         sippy_pr_search=kwargs.get("sippy_pr_search", False),
         github_repos=kwargs.get("github_repos", []),
+        confidence_by_metric=confidence_by_metric,
     )
     return analysis_result, viz_data

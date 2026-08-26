@@ -2,7 +2,6 @@
 
 # pylint: disable = line-too-long
 import pandas as pd
-import numpy
 
 from otava.analysis import TTestStats
 from otava.series import  ChangePoint
@@ -37,6 +36,7 @@ class CMR(Algorithm):
             series.data = self.dataframe
             return series, {}
         # if larger than 2 rows, need to get the mean of 0 through -2
+        self._original_dataframe = self.dataframe.copy()
         self.dataframe = self.combine_and_average_runs(self.dataframe)
 
         series= self.setup_series()
@@ -76,14 +76,19 @@ class CMR(Algorithm):
         change_points_by_metric={ k:[] for k in metric_columns }
 
         for column in metric_columns:
+            try:
+                m1 = float(dataframe_list[column][0])
+                m2 = float(dataframe_list[column][1])
+            except (ValueError, TypeError):
+                continue
 
             change_point = ChangePoint(metric=column,
                                 index=1,
                                 qhat=0.0,
                                 time=0,
                                 stats=TTestStats(
-                                        mean_1=dataframe_list[column][0],
-                                        mean_2=dataframe_list[column][1],
+                                        mean_1=m1,
+                                        mean_2=m2,
                                         std_1=0.0,
                                         std_2=0.0,
                                         pvalue=1.0
@@ -104,25 +109,29 @@ class CMR(Algorithm):
         Returns:
             pd.Dataframe: data frame of most recent run and averaged previous runs
         """
-        i = 0
-
         last_row = dataFrame.tail(1)
-        dF = dataFrame[:-1]
-        data2 = {}
+        baseline_runs = dataFrame[:-1]
 
-        metric_columns = list(dataFrame.columns)
-        for column in metric_columns:
+        # Preserve metadata from the most recent baseline run.
+        baseline_data = {
+            column: [baseline_runs[column].iloc[-1]]
+            for column in dataFrame.columns
+        }
 
-            if isinstance(dF.loc[0, column], (numpy.float64, numpy.int64)):
-                mean = dF[column].mean()
-                data2[column] = [mean]
-            else:
-                column_list = dF[column].tolist()
-                # Convert each item to string to handle lists, UUIDs, and other non-string types
-                non_numeric_joined_list = ','.join(str(item) for item in column_list)
-                data2[column] = [non_numeric_joined_list]
-            i += 1
-        df2 = pd.DataFrame(data2)
+        # Average only configured metrics across the baseline runs.
+        for column in self.metrics_config:
+            if column not in baseline_runs.columns:
+                continue
 
-        result = pd.concat([df2, last_row], ignore_index=True)
+            numeric_col = pd.to_numeric(
+                baseline_runs[column], errors='coerce'
+            )
+            baseline_data[column] = [
+                numeric_col.mean()
+                if numeric_col.notna().any()
+                else float('nan')
+            ]
+
+        baseline_row = pd.DataFrame(baseline_data)
+        result = pd.concat([baseline_row, last_row], ignore_index=True)
         return result
