@@ -39,6 +39,8 @@ def get_algorithm_type(kwargs):
         algorithm_name = cnsts.ISOLATION_FOREST
     elif kwargs['cmr']:
         algorithm_name = cnsts.CMR
+    elif kwargs["orig_analyze"]:
+        algorithm_name = cnsts.ORIG_EDIVISIVE
     else:
         algorithm_name = None
     return algorithm_name
@@ -251,7 +253,11 @@ def analyze(test, kwargs, is_pull=False):
     final_algorithm = algorithm
     expanded_algorithm = None
 
-    if regression_flag and algorithm_name != cnsts.CMR and has_early_changepoint_raw(
+    # CMR compares fixed run pairs, so expansion is N/A. Orig E-Divisive does not
+    # use the Hunter sliding-window heuristic, so early changepoints are genuine
+    # signals, not window-edge artifacts — no expansion needed.
+    skip_expansion = (cnsts.CMR, cnsts.ORIG_EDIVISIVE)
+    if regression_flag and algorithm_name not in skip_expansion and has_early_changepoint_raw(
         change_points_by_metric, max_early_index=cnsts.CHANGEPOINT_BUFFER
     ):
         logger.info(
